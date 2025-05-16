@@ -1,3 +1,6 @@
+![image](https://github.com/user-attachments/assets/ba3216b9-3323-4591-bfc4-763c1e4f0174)
+
+
 # 🛡 PatchWatchdog
 
 <p align="center">
