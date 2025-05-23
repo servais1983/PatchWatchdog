@@ -32,6 +32,8 @@
 
 ## ⚙️ Installation
 
+### 🐧 Linux
+
 ```bash
 # Cloner le dépôt
 git clone https://github.com/servais1983/PatchWatchdog.git
@@ -46,19 +48,52 @@ chmod +x install.sh
 ./install.sh
 ```
 
+### 🪟 Windows
+
+```powershell
+# Cloner le dépôt
+git clone https://github.com/servais1983/PatchWatchdog.git
+cd PatchWatchdog
+
+# Configurer les variables d'environnement
+copy .env.example .env
+# Éditez .env avec vos webhooks et tokens en utilisant Notepad ou un autre éditeur
+# notepad .env
+
+# Exécuter le script d'installation
+.\install.bat
+```
+
+> 💡 **Note pour Windows** : Assurez-vous que Python est installé et ajouté au PATH. Vous pouvez télécharger Python depuis [python.org](https://www.python.org/downloads/) en cochant l'option "Add Python to PATH" lors de l'installation.
+
 ## 🛠️ Utilisation
 
 ### Vérification basique
+
+#### 🐧 Linux
 
 ```bash
 # Vérification sur Linux sans notification
 python3 patchwatchdog.py --os linux
 
-# Vérification sur Windows avec notification Slack
-python3 patchwatchdog.py --os windows --notify slack
+# Vérification sur Linux avec notification Slack
+python3 patchwatchdog.py --os linux --notify slack
 
 # Vérification avec création d'issue GitHub
 python3 patchwatchdog.py --os linux --notify github
+```
+
+#### 🪟 Windows
+
+```powershell
+# Vérification sur Windows sans notification
+python patchwatchdog.py --os windows
+
+# Vérification sur Windows avec notification Slack
+python patchwatchdog.py --os windows --notify slack
+
+# Vérification avec création d'issue GitHub
+python patchwatchdog.py --os windows --notify github
 ```
 
 ### Variables d'environnement
