@@ -188,7 +188,7 @@ L'intégration GitHub Issues nécessite :
 
 ## 🤝 Contribuer
 
-Les contributions sont les bienvenues ! N'hésitez pas à ouvrir une issue ou à soumettre une pull request.
+Les contributions sont les bienvenues !! N'hésitez pas à ouvrir une issue ou à soumettre une pull request.
 
 ## 📄 Licence
 
