@@ -96,6 +96,43 @@ python patchwatchdog.py --os windows --notify slack
 python patchwatchdog.py --os windows --notify github
 ```
 
+### 📊 Rapports HTML
+
+Un rapport HTML détaillé est automatiquement généré à chaque exécution de PatchWatchdog. Ce rapport inclut :
+
+- Résumé de l'analyse avec statistiques
+- Liste des vulnérabilités détectées
+- Inventaire complet des packages analysés
+- Recommandations de sécurité
+
+Les rapports sont sauvegardés dans le dossier `reports/` avec un horodatage unique.
+
+### 🔄 Vérification et application des mises à jour
+
+PatchWatchdog peut également vérifier et appliquer automatiquement les mises à jour critiques du système :
+
+#### 🐧 Linux
+
+```bash
+# Vérifier les mises à jour disponibles
+python3 patchwatchdog.py --os linux --check-updates
+
+# Vérifier et appliquer automatiquement les mises à jour critiques
+python3 patchwatchdog.py --os linux --auto-update
+```
+
+#### 🪟 Windows
+
+```powershell
+# Vérifier les mises à jour disponibles
+python patchwatchdog.py --os windows --check-updates
+
+# Vérifier et appliquer automatiquement les mises à jour critiques
+python patchwatchdog.py --os windows --auto-update
+```
+
+> ⚠️ **Note importante** : L'application automatique des mises à jour nécessite des privilèges administratifs. Sur Linux, utilisez `sudo` si nécessaire. Sur Windows, exécutez PowerShell en tant qu'administrateur.
+
 ### Variables d'environnement
 
 Pour activer les notifications, configurez les variables d'environnement suivantes dans le fichier `.env` :
