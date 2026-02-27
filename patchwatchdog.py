@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-PatchWatchdog — Surveillance de patches & détection de CVEs.
+PatchWatchdog -- Patch state monitoring and CVE detection.
 
-Moteurs de scan :
-  - pip packages   : OSV.dev (gratuit, sans clé)
-  - system packages: NVD API v2 (gratuit; NVD_API_KEY pour x10 vitesse)
-                  ou Vulners (VULNERS_API_KEY, plan payant)
+Scan engines:
+  - pip packages   : OSV.dev (free, no key required)
+  - system packages: NVD API v2 (free; NVD_API_KEY for 10x speed)
+                     or Vulners (VULNERS_API_KEY, paid plan)
 
-Exit codes : 0 = propre | 1 = vulnérabilités trouvées | 2 = erreur
+Exit codes: 0 = clean  |  1 = vulnerabilities found  |  2 = error
 """
 
 import argparse
@@ -26,10 +26,10 @@ from core import inventory, scanner, notifier, reporter, updater
 
 def main():
     parser = argparse.ArgumentParser(
-        description="PatchWatchdog – Vérification de patches & CVE",
+        description="PatchWatchdog -- Patch monitoring and CVE detection",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Exemples :\n"
+            "Examples:\n"
             "  python patchwatchdog.py --os windows\n"
             "  python patchwatchdog.py --os windows --check-updates\n"
             "  python patchwatchdog.py --os windows --auto-update\n"
@@ -37,13 +37,13 @@ def main():
         )
     )
     parser.add_argument("--os", choices=["linux", "windows"], required=True,
-                        help="Système d'exploitation cible")
+                        help="Target operating system")
     parser.add_argument("--notify", choices=["slack", "github"],
-                        help="Envoyer une alerte si des vulnérabilités sont détectées")
+                        help="Send an alert if vulnerabilities are found")
     parser.add_argument("--auto-update", action="store_true",
-                        help="Installer automatiquement les correctifs pour tout ce qui est détecté")
+                        help="Automatically install fixes for all detected vulnerabilities")
     parser.add_argument("--check-updates", action="store_true",
-                        help="Vérifier les mises à jour système disponibles (Windows Update / apt)")
+                        help="Check for available OS updates (Windows Update / apt)")
     args = parser.parse_args()
 
     exit_code = 0

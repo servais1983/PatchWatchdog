@@ -10,14 +10,14 @@ def _esc(value):
 
 
 def _severity_badge_class(severity):
-    """Retourne la classe CSS correspondant à la sévérité."""
+    """Return the CSS class for a given severity label."""
     mapping = {
-        "CRITIQUE": "badge-critical",
-        "ÉLEVÉE": "badge-high",
-        "MOYENNE": "badge-medium",
-        "FAIBLE": "badge-low",
+        "CRITICAL": "badge-critical",
+        "HIGH":     "badge-high",
+        "MEDIUM":   "badge-medium",
+        "LOW":      "badge-low",
     }
-    return mapping.get(severity, "badge-low")
+    return mapping.get(severity.upper() if severity else "", "badge-low")
 
 
 CSS = """
@@ -48,7 +48,7 @@ CSS = """
 
 def generate_html_report(packages, vulnerable, os_type):
     """
-    Génère un rapport HTML sécurisé (protection XSS, sévérité réelle).
+    Generate a secure HTML report (protection XSS, sévérité réelle).
 
     Args:
         packages (list): Liste des packages scannés.
@@ -62,9 +62,9 @@ def generate_html_report(packages, vulnerable, os_type):
     for vuln in vulnerable:
         vuln.setdefault("cve_link", format_cve_details(vuln["cve"]))
         # Ne pas écraser la sévérité fournie par le scanner
-        if "severity" not in vuln or vuln["severity"] == "INCONNUE":
+        if "severity" not in vuln or vuln["severity"] == "UNKNOWN":
             cvss = vuln.get("cvss")
-            vuln["severity"] = cvss_to_severity(cvss) if cvss is not None else "INCONNUE"
+            vuln["severity"] = cvss_to_severity(cvss) if cvss is not None else "UNKNOWN"
 
     os.makedirs("reports", exist_ok=True)
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -80,7 +80,7 @@ def generate_html_report(packages, vulnerable, os_type):
 
     # ── En-tête + résumé ─────────────────────────────────────────────────────
     html_out = f"""<!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -89,35 +89,35 @@ def generate_html_report(packages, vulnerable, os_type):
 </head>
 <body>
 <header>
-    <h1>&#x1F6E1;&#xFE0F; Rapport PatchWatchdog</h1>
-    <p>Analyse de s&#233;curit&#233; des packages install&#233;s &mdash; {_esc(now_str)}</p>
+    <h1>PatchWatchdog Report</h1>
+    <p>Installed package security scan &mdash; {_esc(now_str)}</p>
 </header>
 
 <div class="summary-box">
     <div class="summary-item">
         <div class="summary-number">{total_packages}</div>
-        <div class="summary-label">Packages analys&#233;s</div>
+        <div class="summary-label">Packages scanned</div>
     </div>
     <div class="summary-item">
         <div class="summary-number {vuln_class}">{total_vulnerable}</div>
-        <div class="summary-label">Vuln&#233;rabilit&#233;s d&#233;tect&#233;es</div>
+        <div class="summary-label">Vulnerabilities detected</div>
     </div>
     <div class="summary-item">
         <div class="summary-number {rate_class}">{vuln_rate:.1f}%</div>
-        <div class="summary-label">Taux de vuln&#233;rabilit&#233;</div>
+        <div class="summary-label">Vulnerability rate</div>
     </div>
     <div class="summary-item">
         <div class="summary-number">{_esc(os_type.capitalize())}</div>
-        <div class="summary-label">Syst&#232;me d&apos;exploitation</div>
+        <div class="summary-label">Operating system</div>
     </div>
 </div>
 
 <div class="container">
-    <h2>R&#233;sum&#233; de l&apos;analyse</h2>
-    <p>PatchWatchdog a analys&#233; <strong>{total_packages} packages</strong>
-    install&#233;s sur votre syst&#232;me <strong>{_esc(os_type.capitalize())}</strong>.
-    Analyse effectu&#233;e le {_esc(now_str)}.</p>
-    {"<div class=\"no-vulnerabilities\">&#x2705; Aucune vuln&#233;rabilit&#233; d&#233;tect&#233;e dans vos packages.</div>" if not vulnerable else ""}
+    <h2>Scan summary</h2>
+    <p>PatchWatchdog scanned <strong>{total_packages} packages</strong>
+    on your <strong>{_esc(os_type.capitalize())}</strong>.
+    Scan completed at {_esc(now_str)}.</p>
+    {"<div class=\"no-vulnerabilities\">No vulnerabilities detected in your packages.</div>" if not vulnerable else ""}
 </div>
 """
 
@@ -125,13 +125,13 @@ def generate_html_report(packages, vulnerable, os_type):
     if vulnerable:
         html_out += """
 <div class="container">
-    <h2>Vuln&#233;rabilit&#233;s d&#233;tect&#233;es</h2>
-    <p>Ces packages pr&#233;sentent des vuln&#233;rabilit&#233;s connues et doivent &#234;tre mis &#224; jour.</p>
+    <h2>Vulnerabilities detected</h2>
+    <p>These packages have known vulnerabilities and should be updated immediately.</p>
     <table>
         <thead>
             <tr>
                 <th>Package</th><th>Version</th><th>CVE</th>
-                <th>CVSS</th><th>S&#233;v&#233;rit&#233;</th>
+                <th>CVSS</th><th>Severity</th>
             </tr>
         </thead>
         <tbody>
@@ -155,7 +155,7 @@ def generate_html_report(packages, vulnerable, os_type):
     vuln_keys = {(v["package"], v["version"]) for v in vulnerable}
     html_out += f"""
 <div class="container">
-    <h2>Tous les packages analys&#233;s ({total_packages})</h2>
+    <h2>All scanned packages ({total_packages})</h2>
     <table>
         <thead>
             <tr><th>Package</th><th>Version</th><th>Type</th><th>Statut</th></tr>
@@ -164,9 +164,9 @@ def generate_html_report(packages, vulnerable, os_type):
 """
     for pkg in packages:
         is_vuln = (pkg["package"], pkg["version"]) in vuln_keys
-        badge = ('<span class="badge badge-critical">Vuln&#233;rable</span>'
+        badge = ('<span class="badge badge-critical">Vulnerable</span>'
                  if is_vuln else
-                 '<span class="badge badge-low">S&#233;curis&#233;</span>')
+                 '<span class="badge badge-low">Safe</span>')
         pkg_type = _esc(pkg.get("type", "system"))
         html_out += (
             f"            <tr>"
@@ -183,16 +183,16 @@ def generate_html_report(packages, vulnerable, os_type):
 <div class="container">
     <h2>Recommandations</h2>
     <ul>
-        <li>Mettre &#224; jour r&#233;guli&#232;rement tous vos packages.</li>
-        <li>Porter une attention particuli&#232;re aux packages vuln&#233;rables.</li>
-        <li>Configurer des mises &#224; jour automatiques lorsque c&apos;est possible.</li>
-        <li>Ex&#233;cuter PatchWatchdog r&#233;guli&#232;rement pour surveiller l&apos;&#233;tat de vos packages.</li>
-        <li>D&#233;finir <code>VULNERS_API_KEY</code> pour analyser aussi les packages syst&#232;me.</li>
+        <li>Keep all packages regularly updated.</li>
+        <li>Prioritize packages flagged as vulnerable.</li>
+        <li>Configure automatic updates where possible.</li>
+        <li>Run PatchWatchdog regularly to monitor your package state.</li>
+        <li>D&#233;finir <code>NVD_API_KEY</code> (free) to speed up system package scans 10x.</li>
     </ul>
 </div>
 
 <div class="footer">
-    <p>Rapport g&#233;n&#233;r&#233; par <strong>PatchWatchdog</strong> &mdash;
+    <p>Report generated by <strong>PatchWatchdog</strong> &mdash;
     <a href="https://github.com/servais1983/PatchWatchdog" target="_blank" rel="noopener noreferrer">GitHub</a></p>
 </div>
 </body>
@@ -205,7 +205,7 @@ def generate_html_report(packages, vulnerable, os_type):
     return report_filename
 
     """
-    Génère un rapport HTML complet avec les résultats du scan.
+    Generate a secure HTML report complet avec les résultats du scan.
     
     Args:
         packages (list): Liste des packages scannés
@@ -235,7 +235,7 @@ def generate_html_report(packages, vulnerable, os_type):
     
     # Générer le contenu HTML
     html_content = f"""<!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
