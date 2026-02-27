@@ -5,6 +5,13 @@ Engines:
   - pip packages   : OSV.dev  (free, no key required)
   - system packages: NVD API v2 (free; NVD_API_KEY for 10x speed)
                      or Vulners  (VULNERS_API_KEY, paid plan, takes priority)
+
+False-positive reduction (NVD engine):
+  - KNOWN_VENDORS maps common package display names to their exact NVD vendor
+    string, so queries use a precise CPE instead of the wildcard cpe:2.3:a:*:...
+  - _confirm_cpe() cross-checks every returned CVE's configuration nodes:
+    if *all* CPEs in the configurations belong to a vendor that is clearly not
+    the queried product, the CVE is discarded as a false positive.
 """
 import os
 import time
@@ -16,6 +23,52 @@ import requests
 OSV_API     = "https://api.osv.dev/v1/query"
 NVD_API     = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 VULNERS_API = "https://vulners.com/api/v3/burp/software/"
+
+# ---------------------------------------------------------------------------
+# Known NVD vendor names for common Windows software.
+# Maps the display name (lower-cased) to the exact CPE vendor field used by NVD.
+# This avoids wildcard matches that pull in CVEs for unrelated products sharing
+# the same product-name component (e.g. Jenkins "git" plugin vs Git for Windows).
+# ---------------------------------------------------------------------------
+KNOWN_VENDORS = {
+    "git":                   "git_for_windows",
+    "python":                "python",
+    "nodejs":                "nodejs",
+    "node.js":               "nodejs",
+    "openssl":               "openssl",
+    "curl":                  "haxx",
+    "firefox":               "mozilla",
+    "mozilla firefox":       "mozilla",
+    "thunderbird":           "mozilla",
+    "chrome":                "google",
+    "google chrome":         "google",
+    "visual studio code":    "microsoft",
+    "discord":               "discord",
+    "steam":                 "valvesoftware",
+    "vlc":                   "videolan",
+    "vlc media player":      "videolan",
+    "7-zip":                 "7-zip",
+    "winrar":                "rarlab",
+    "notepad++":             "notepad-plus-plus",
+    "winamp":                "nullsoft",
+    "putty":                 "simon_tatham",
+    "winscp":                "winscp",
+    "filezilla":             "filezilla-project",
+    "virtualbox":            "oracle",
+    "vmware workstation":    "vmware",
+    "wireshark":             "wireshark",
+    "nmap":                  "nmap",
+    "gimp":                  "gimp",
+    "libreoffice":           "libreoffice",
+    "audacity":              "audacityteam",
+    "ccleaner":              "piriform",
+    "malwarebytes":          "malwarebytes",
+}
+
+
+def _get_vendor(display_name):
+    """Return the known NVD vendor for a package, or None if unknown."""
+    return KNOWN_VENDORS.get(display_name.lower().strip())
 
 
 def _cvss_to_severity(score):
@@ -80,16 +133,79 @@ def _check_osv(pkg):
         return []
 
 
+def _confirm_cpe(cve_obj, product_name, vendor=None):
+    """
+    Validate that a CVE's configuration nodes actually reference the queried
+    product, not just a different product that shares the same name token.
+
+    Strategy:
+    - Extract all CPE strings from the CVE's configurations.
+    - A CPE is accepted if its product field contains the queried product name
+      OR its vendor field matches the expected vendor.
+    - If NO CPE is accepted, the CVE is a false positive and should be dropped.
+    - If the CVE has no configuration data (old format), it passes through.
+    """
+    product_key = product_name.lower().replace(" ", "_").replace("-", "_")
+    all_cpes = []
+
+    for config in cve_obj.get("configurations", []):
+        for node in config.get("nodes", []):
+            for match in node.get("cpeMatch", []):
+                cpe_str = match.get("criteria", "")
+                all_cpes.append(cpe_str)
+
+    if not all_cpes:
+        # No configuration data — cannot filter, pass through
+        return True
+
+    for cpe_str in all_cpes:
+        parts = cpe_str.split(":")
+        if len(parts) < 6:
+            continue
+        cpe_vendor  = parts[3].lower()
+        cpe_product = parts[4].lower().replace("-", "_")
+
+        # Accept if CPE product field contains the queried product name
+        if product_key in cpe_product or cpe_product in product_key:
+            # If we have an expected vendor, only accept if vendor matches too
+            if vendor is None:
+                return True
+            if vendor in cpe_vendor or cpe_vendor in vendor:
+                return True
+
+        # Accept if CPE vendor field matches the expected vendor
+        if vendor and (vendor in cpe_vendor or cpe_vendor in vendor):
+            return True
+
+    return False
+
+
 def _check_nvd(pkg, api_key=None):
+    """
+    Query NVD API v2 for a system package.
+
+    Uses a vendor-specific CPE when the package is in KNOWN_VENDORS, falling
+    back to a wildcard vendor CPE. All results are cross-checked with
+    _confirm_cpe() to discard false positives.
+
+    Returns: list of vuln dicts | 'rate_limited' | 'forbidden' | []
+    """
     headers = {}
     if api_key:
         headers["apiKey"] = api_key
+
+    vendor     = _get_vendor(pkg["package"])
     name_lower = pkg["package"].lower().replace(" ", "_")
-    cpe = f"cpe:2.3:a:*:{name_lower}:{pkg['version']}:*:*:*:*:*:*:*"
+    version    = pkg["version"]
+
+    # Prefer a precise vendor CPE; fall back to wildcard
+    vendor_part = vendor if vendor else "*"
+    cpe = f"cpe:2.3:a:{vendor_part}:{name_lower}:{version}:*:*:*:*:*:*:*"
+
     try:
         r = requests.get(
             NVD_API,
-            params={"virtualMatchString": cpe, "resultsPerPage": 10},
+            params={"virtualMatchString": cpe, "resultsPerPage": 20},
             headers=headers,
             timeout=20,
         )
@@ -98,11 +214,17 @@ def _check_nvd(pkg, api_key=None):
         if r.status_code == 429:
             return "rate_limited"
         r.raise_for_status()
+
         results = []
         for entry in r.json().get("vulnerabilities", []):
             cve_obj = entry.get("cve", {})
-            cve_id = cve_obj.get("id", "unknown")
-            metrics = cve_obj.get("metrics", {})
+            cve_id  = cve_obj.get("id", "unknown")
+
+            # --- False-positive filter ---
+            if not _confirm_cpe(cve_obj, pkg["package"], vendor):
+                continue
+
+            metrics    = cve_obj.get("metrics", {})
             cvss_score = None
             for key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
                 lst = metrics.get(key, [])
@@ -111,14 +233,16 @@ def _check_nvd(pkg, api_key=None):
                     if s is not None:
                         cvss_score = float(s)
                         break
+
             results.append({
-                "package": pkg["package"],
-                "version": pkg["version"],
-                "cve": cve_id,
-                "cvss": cvss_score,
+                "package":  pkg["package"],
+                "version":  pkg["version"],
+                "cve":      cve_id,
+                "cvss":     cvss_score,
                 "severity": _cvss_to_severity(cvss_score),
             })
         return results
+
     except requests.exceptions.Timeout:
         return []
     except requests.exceptions.RequestException:

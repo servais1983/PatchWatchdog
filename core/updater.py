@@ -235,22 +235,87 @@ def upgrade_system_packages(package_names, os_type):
                 print(f"    [FAIL] {name}: {e}")
 
     elif os_type == "windows":
-        for name in package_names:
-            ps_cmd = (
-                f"Install-Package -Name '{name}' -Force -AcceptLicense "
-                f"-ErrorAction SilentlyContinue | Out-Null; Write-Output 'DONE'"
+        # Resolve winget path: try command name first, then known full path
+        _wg_ver, _, _wg_rc = _run_ps("winget --version", timeout=15)
+        if _wg_rc == 0 and _wg_ver.strip():
+            _winget_cmd = "winget"
+        else:
+            # winget often lives in WindowsApps but isn't in subprocess PATH
+            _wg_full = (
+                "$env:LOCALAPPDATA\\Microsoft\\WindowsApps\\winget.exe"
             )
-            stdout, stderr, rc = _run_ps(ps_cmd, timeout=120)
+            _wg_ver2, _, _wg_rc2 = _run_ps(
+                f"& \"{_wg_full}\" --version", timeout=15
+            )
+            _winget_cmd = f"& \"{_wg_full}\"" if (_wg_rc2 == 0 and _wg_ver2.strip()) else None
 
-            if "DONE" in stdout and rc == 0:
+        for name in package_names:
+            success = False
+
+            # --- 1. Squirrel self-updater (Discord, Slack, etc.) ---
+            squirrel_ps = (
+                f"$app = Get-ChildItem \"$env:LOCALAPPDATA\\{name}\" "
+                f"-Filter 'Update.exe' -ErrorAction SilentlyContinue | "
+                f"Select-Object -First 1; "
+                f"if ($app) {{ Write-Output $app.FullName }} else {{ Write-Output 'NONE' }}"
+            )
+            sq_out, _, sq_rc = _run_ps(squirrel_ps, timeout=10)
+            sq_out = sq_out.strip()
+            if sq_rc == 0 and sq_out != "NONE" and sq_out:
+                # Launch the updater in a detached process then wait a moment
+                _run_ps(
+                    f"Start-Process -FilePath '{sq_out}' "
+                    f"-ArgumentList '--update https://discord.com/api/downloads/"
+                    f"distributions/app/installers/latest?channel=stable&platform=win&arch=x64'"
+                    f" -NoNewWindow; Start-Sleep -Seconds 10",
+                    timeout=30,
+                )
                 upgraded.append(name)
-                print(f"    [OK] {name} upgraded via Install-Package.")
-            else:
-                manual_cmd = f'winget upgrade --name "{name}" --accept-source-agreements'
-                failed.append({"package": name, "error": "Install-Package unavailable"})
-                manual_steps.append({"package": name, "command": manual_cmd})
-                print(f"    [~] {name}: manual update required.")
-                print(f"        > {manual_cmd}")
+                print(f"    [OK] {name} updated via built-in updater (re-launch app to complete).")
+                success = True
+
+            # --- 2. winget ---
+            if not success and _winget_cmd:
+                stdout, stderr, rc = _run_ps(
+                    f"{_winget_cmd} upgrade --name \"{name}\" --accept-source-agreements "
+                    "--accept-package-agreements --silent",
+                    timeout=180,
+                )
+                out_lower = (stdout + stderr).lower()
+                if rc == 0:
+                    if "no applicable" in out_lower or "already installed" in out_lower:
+                        print(f"    [i] {name}: already at latest version.")
+                    else:
+                        upgraded.append(name)
+                        print(f"    [OK] {name} upgraded via winget.")
+                    success = True
+                elif "no applicable" in out_lower or "no available upgrade" in out_lower:
+                    print(f"    [i] {name}: no update available via winget.")
+                    success = True
+
+            # --- 3. Install-Package fallback ---
+            if not success:
+                ps_cmd = (
+                    f"try {{ Install-Package -Name '{name}' -Force -AcceptLicense "
+                    f"-ErrorAction Stop | Out-Null; Write-Output 'PKG_OK' }} "
+                    f"catch {{ Write-Output \"PKG_ERR:$($_.Exception.Message)\" }}"
+                )
+                stdout2, stderr2, rc2 = _run_ps(ps_cmd, timeout=120)
+                if "PKG_OK" in stdout2 and rc2 == 0:
+                    upgraded.append(name)
+                    print(f"    [OK] {name} upgraded via Install-Package.")
+                else:
+                    winget_path = (
+                        "$env:LOCALAPPDATA\\Microsoft\\WindowsApps\\winget.exe"
+                    )
+                    manual_cmd = (
+                        f'& "{winget_path}" upgrade --name "{name}" '
+                        "--accept-source-agreements --accept-package-agreements"
+                    )
+                    failed.append({"package": name, "error": "Auto-upgrade failed"})
+                    manual_steps.append({"package": name, "command": manual_cmd})
+                    print(f"    [~] {name}: run manually:")
+                    print(f"        > {manual_cmd}")
 
     return {
         "success": len(failed) == 0 or len(upgraded) > 0,
