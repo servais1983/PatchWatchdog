@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.8+-blue.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.8+"/>
   <img src="https://img.shields.io/badge/OS-Linux%20%7C%20Windows-informational.svg?style=flat-square" alt="Linux & Windows"/>
-  <img src="https://img.shields.io/badge/CVE%20Engine-OSV.dev%20%7C%20Vulners-critical.svg?style=flat-square" alt="CVE Engine"/>
+  <img src="https://img.shields.io/badge/CVE%20Engine-OSV.dev%20%7C%20NVD%20%7C%20Vulners-critical.svg?style=flat-square" alt="CVE Engine"/>
   <img src="https://img.shields.io/badge/License-MIT-green.svg?style=flat-square" alt="MIT License"/>
 </p>
 
@@ -43,7 +43,8 @@
 | Scope | Engine | Authentication |
 |---|---|---|
 | Python (pip) packages | [OSV.dev](https://osv.dev/) API | None â€” free |
-| System packages | [Vulners](https://vulners.com/) API | `VULNERS_API_KEY` required (paid plan) |
+| System packages | [NVD API v2](https://nvd.nist.gov/developers) | None free (NVD_API_KEY for 10x speed) |
+| System packages (enhanced) | [Vulners](https://vulners.com/) API | `VULNERS_API_KEY` required (paid plan) |
 
 > **Note:** This tool complements a patch management strategy; it does not replace it.
 
@@ -52,10 +53,10 @@
 ## Features
 
 - Inventory of installed packages (apt + pip on Linux; Windows registry + pip on Windows)
-- Automatic CVE detection via OSV.dev (pip, free) and Vulners (system packages, optional)
+- Automatic CVE detection via OSV.dev (pip, free) and NVD API v2 (system, free) or Vulners (optional)
 - Real CVSS scores and severity levels (Critical / High / Medium / Low) in every report
 - Configurable alerts: Slack Incoming Webhook, GitHub Issues
-- Automatic update of vulnerable pip packages with `--auto-update`
+- **Automatic installation of vulnerable packages** with `--auto-update` (pip + system)
 - Windows Update check and critical patch application
 - HTML reports with XSS protection (all output HTML-escaped)
 - `.env` file support via `python-dotenv`
@@ -115,8 +116,12 @@ SLACK_WEBHOOK=https://hooks.slack.com/services/XXXXX/XXXXX/XXXXX
 GITHUB_TOKEN=ghp_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 GITHUB_REPO=your_user/your_repository
 
-# System package scanning via Vulners (optional â€” paid plan required)
-# Without this key, only pip packages are scanned via OSV.dev (free)
+# NVD API key — free, speeds up system package scanning x10
+# Get yours in 2 min: https://nvd.nist.gov/developers/request-an-api-key
+# Without key: ~6s/package | With key: ~0.6s/package
+NVD_API_KEY=
+
+# Vulners API key — optional, paid plan, replaces NVD for system packages
 VULNERS_API_KEY=
 ```
 
@@ -208,7 +213,7 @@ PatchWatchdog/
 â”œâ”€â”€ core/
 â”‚   â”œâ”€â”€ __init__.py        # Package marker
 â”‚   â”œâ”€â”€ inventory.py       # Package collection (apt, pip, Windows registry)
-â”‚   â”œâ”€â”€ scanner.py         # CVE lookup via OSV.dev and Vulners
+â”‚   â”œâ”€â”€ scanner.py         # CVE lookup via OSV.dev, NVD API v2, and Vulners
 â”‚   â”œâ”€â”€ notifier.py        # Slack and GitHub Issues alerts
 â”‚   â”œâ”€â”€ reporter.py        # HTML report generation (XSS-safe)
 â”‚   â”œâ”€â”€ updater.py         # OS update check/apply, pip upgrade

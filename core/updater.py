@@ -175,6 +175,243 @@ Write-Output "REBOOT:$($res.RebootRequired)"
 
 def upgrade_pip_packages(package_names):
     """
+    Met à jour une liste de packages pip vers leur dernière version.
+
+    Returns:
+        dict: {success, upgraded, failed}
+    """
+    upgraded = []
+    failed = []
+
+    for name in package_names:
+        try:
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "--upgrade", "--quiet", name],
+                timeout=120
+            )
+            upgraded.append(name)
+            print(f"    [✓] {name} mis à jour.")
+        except Exception as e:
+            failed.append({"package": name, "error": str(e)})
+            print(f"    [✗] {name} : {e}")
+
+    return {"success": len(failed) == 0, "upgraded": upgraded, "failed": failed}
+
+
+def upgrade_system_packages(package_names, os_type):
+    """
+    Met à jour des packages système.
+
+    - Windows : tente Install-Package (NuGet/PackageManagement) puis suggère la commande manuelle.
+    - Linux   : apt-get install --only-upgrade.
+
+    Returns:
+        dict: {success, upgraded, failed, manual_steps}
+    """
+    upgraded = []
+    failed = []
+    manual_steps = []
+
+    if os_type == "linux":
+        for name in package_names:
+            try:
+                subprocess.check_call(
+                    ["apt-get", "install", "--only-upgrade", "-y", name],
+                    timeout=120
+                )
+                upgraded.append(name)
+                print(f"    [✓] {name} mis à jour.")
+            except Exception as e:
+                failed.append({"package": name, "error": str(e)})
+                print(f"    [✗] {name} : {e}")
+
+    elif os_type == "windows":
+        for name in package_names:
+            # Tentative via PowerShell Install-Package
+            ps_cmd = (
+                f"Install-Package -Name '{name}' -Force -AcceptLicense "
+                f"-ErrorAction SilentlyContinue | Out-Null; Write-Output 'DONE'"
+            )
+            stdout, stderr, rc = _run_ps(ps_cmd, timeout=120)
+
+            if "DONE" in stdout and rc == 0:
+                upgraded.append(name)
+                print(f"    [✓] {name} mis à jour via Install-Package.")
+            else:
+                # Fournir la commande manuelle
+                manual_cmd = f'winget upgrade --name "{name}" --accept-source-agreements'
+                failed.append({"package": name, "error": "Install-Package non disponible"})
+                manual_steps.append({"package": name, "command": manual_cmd})
+                print(f"    [~] {name} : mise à jour manuelle requise.")
+                print(f"        > {manual_cmd}")
+
+    return {
+        "success": len(failed) == 0 or len(upgraded) > 0,
+        "upgraded": upgraded,
+        "failed": failed,
+        "manual_steps": manual_steps,
+    }
+
+
+
+def check_os_updates(os_type):
+    """
+    Vérifie les mises à jour disponibles pour le système d'exploitation.
+
+    Returns:
+        dict: {available, critical, updates_list, command_output}
+    """
+    updates = {
+        "available": False,
+        "critical": False,
+        "updates_list": [],
+        "command_output": ""
+    }
+
+    try:
+        if os_type == "linux":
+            import subprocess as sp
+            out = sp.check_output(
+                "apt-get update -qq && apt list --upgradable 2>/dev/null",
+                shell=True, text=True, timeout=120
+            )
+            updates["command_output"] = out
+            for line in out.strip().splitlines():
+                if "upgradable" in line:
+                    pkg_name = line.split("/")[0].strip()
+                    is_critical = "security" in line.lower()
+                    updates["updates_list"].append({"package": pkg_name, "critical": is_critical})
+            updates["available"] = bool(updates["updates_list"])
+            updates["critical"] = any(u["critical"] for u in updates["updates_list"])
+
+        elif os_type == "windows":
+            ps_cmd = """
+$session = New-Object -ComObject Microsoft.Update.Session
+$searcher = $session.CreateUpdateSearcher()
+$result = $searcher.Search("IsInstalled=0")
+$list = @()
+foreach ($u in $result.Updates) {
+    $list += @{ title = $u.Title; critical = ($u.MsrcSeverity -eq "Critical") }
+}
+ConvertTo-Json -Compress -InputObject @{ count = $result.Updates.Count; updates = $list }
+"""
+            stdout, stderr, rc = _run_ps(ps_cmd, timeout=120)
+            updates["command_output"] = stdout or stderr
+
+            if stderr == "TIMEOUT":
+                updates["command_output"] = (
+                    "Délai dépassé lors de la recherche Windows Update (>120s). "
+                    "Vérifiez manuellement via Paramètres > Windows Update."
+                )
+                return updates
+
+            if rc == 0 and stdout.strip():
+                try:
+                    data = json.loads(stdout.strip())
+                    for u in data.get("updates", []):
+                        updates["updates_list"].append({
+                            "package": u.get("title", "Mise à jour inconnue"),
+                            "critical": bool(u.get("critical", False))
+                        })
+                    updates["available"] = data.get("count", 0) > 0
+                    updates["critical"] = any(u["critical"] for u in updates["updates_list"])
+                except json.JSONDecodeError:
+                    updates["command_output"] = (
+                        "Impossible de parser la réponse Windows Update. "
+                        "Vérifiez manuellement via Paramètres > Windows Update."
+                    )
+
+    except Exception as e:
+        updates["command_output"] = f"Erreur lors de la vérification des mises à jour : {e}"
+
+    return updates
+
+
+def apply_os_updates(os_type, critical_only=True):
+    """
+    Applique les mises à jour du système d'exploitation.
+
+    Returns:
+        dict: {success, message, command_output}
+    """
+    result = {"success": False, "message": "", "command_output": ""}
+
+    try:
+        if os_type == "linux":
+            import subprocess as sp
+            filter_flag = (
+                "-t $(lsb_release -cs)-security" if critical_only else ""
+            )
+            cmd = (
+                f"apt-get update -qq && apt-get upgrade -y "
+                f"-o Dpkg::Options::='--force-confdef' "
+                f"-o Dpkg::Options::='--force-confold' {filter_flag}"
+            )
+            out = sp.check_output(cmd, shell=True, text=True, timeout=600)
+            result["command_output"] = out
+            result["success"] = True
+            result["message"] = "Mises à jour Linux appliquées avec succès."
+
+        elif os_type == "windows":
+            critical_filter = 'if ($u.MsrcSeverity -ne "Critical") { continue }' if critical_only else ""
+            ps_cmd = f"""
+$session = New-Object -ComObject Microsoft.Update.Session
+$searcher = $session.CreateUpdateSearcher()
+$found = $searcher.Search("IsInstalled=0")
+$toInstall = New-Object -ComObject Microsoft.Update.UpdateColl
+
+foreach ($u in $found.Updates) {{
+    {critical_filter}
+    if (-not $u.IsDownloaded) {{
+        $dl = $session.CreateUpdateDownloader()
+        $dl.Updates = (New-Object -ComObject Microsoft.Update.UpdateColl)
+        $dl.Updates.Add($u) | Out-Null
+        $dl.Download() | Out-Null
+    }}
+    $toInstall.Add($u) | Out-Null
+}}
+
+if ($toInstall.Count -eq 0) {{
+    Write-Output "NO_UPDATES"
+    exit 0
+}}
+
+$installer = $session.CreateUpdateInstaller()
+$installer.Updates = $toInstall
+$res = $installer.Install()
+Write-Output "RESULT_CODE:$($res.ResultCode)"
+Write-Output "REBOOT:$($res.RebootRequired)"
+"""
+            stdout, stderr, rc = _run_ps(ps_cmd, timeout=600)
+            result["command_output"] = stdout or stderr
+
+            if stderr == "TIMEOUT":
+                result["message"] = "Délai dépassé lors de l'installation (>10 min)."
+            elif "NO_UPDATES" in stdout:
+                result["success"] = True
+                result["message"] = "Aucune mise à jour critique à installer."
+            elif "RESULT_CODE:2" in stdout:
+                result["success"] = True
+                reboot = "REBOOT:True" in stdout
+                result["message"] = (
+                    "Mises à jour installées. Un redémarrage est nécessaire."
+                    if reboot else
+                    "Mises à jour installées avec succès."
+                )
+            else:
+                result["message"] = (
+                    "Échec ou résultat inattendu. "
+                    "Vérifiez Windows Update manuellement."
+                )
+
+    except Exception as e:
+        result["message"] = f"Erreur : {e}"
+
+    return result
+
+
+def upgrade_pip_packages(package_names):
+    """
     Met à jour une liste de packages pip.
 
     Args:

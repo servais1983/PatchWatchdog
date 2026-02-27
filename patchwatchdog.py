@@ -1,121 +1,161 @@
 #!/usr/bin/env python3
 """
 PatchWatchdog — Surveillance de patches & détection de CVEs.
-Usage: python patchwatchdog.py --os {linux|windows} [--notify {slack|github}]
-                                [--check-updates] [--auto-update]
+
+Moteurs de scan :
+  - pip packages   : OSV.dev (gratuit, sans clé)
+  - system packages: NVD API v2 (gratuit; NVD_API_KEY pour x10 vitesse)
+                  ou Vulners (VULNERS_API_KEY, plan payant)
+
+Exit codes : 0 = propre | 1 = vulnérabilités trouvées | 2 = erreur
 """
 
 import argparse
 import os
 import sys
 
-# ── Chargement optionnel du fichier .env ──────────────────────────────────────
+# Chargement optionnel du fichier .env
 try:
     from dotenv import load_dotenv
-    load_dotenv(override=False)   # ne pas écraser les variables déjà définies
+    load_dotenv(override=False)
 except ImportError:
-    pass   # python-dotenv non installé → on continue sans .env
+    pass
 
 from core import inventory, scanner, notifier, reporter, updater
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="PatchWatchdog – Vérification de patches & CVE"
+        description="PatchWatchdog – Vérification de patches & CVE",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Exemples :\n"
+            "  python patchwatchdog.py --os windows\n"
+            "  python patchwatchdog.py --os windows --check-updates\n"
+            "  python patchwatchdog.py --os windows --auto-update\n"
+            "  python patchwatchdog.py --os windows --notify slack\n"
+        )
     )
     parser.add_argument("--os", choices=["linux", "windows"], required=True,
                         help="Système d'exploitation cible")
     parser.add_argument("--notify", choices=["slack", "github"],
-                        help="Canal de notification des alertes")
+                        help="Envoyer une alerte si des vulnérabilités sont détectées")
     parser.add_argument("--auto-update", action="store_true",
-                        help="Appliquer automatiquement les mises à jour critiques")
+                        help="Installer automatiquement les correctifs pour tout ce qui est détecté")
     parser.add_argument("--check-updates", action="store_true",
-                        help="Vérifier les mises à jour système disponibles")
+                        help="Vérifier les mises à jour système disponibles (Windows Update / apt)")
     args = parser.parse_args()
 
-    exit_code = 0   # 0 = OK, 1 = vulnérabilités détectées, 2 = erreur
+    exit_code = 0
 
-    # ── Vérification / application des mises à jour système ──────────────────
+    # -- OS update check / apply ----------------------------------------------
     if args.check_updates or args.auto_update:
-        print("[🔍] Vérification des mises à jour système...")
+        print("[*] Checking for OS updates...")
         os_updates = updater.check_os_updates(args.os)
 
         if os_updates["available"]:
             has_critical = os_updates["critical"]
-
-            if has_critical:
-                print("[⚠️] Mises à jour critiques disponibles :")
-            else:
-                print("[ℹ️] Mises à jour disponibles (aucune critique) :")
-
+            label = "critical" if has_critical else "available (none critical)"
+            print(f"[{'!!' if has_critical else 'i'}] Updates {label}:")
             for u in os_updates["updates_list"]:
-                mark = "🔴" if u.get("critical") else "🔵"
-                print(f"  {mark} {u['package']}")
+                mark = "  [CRITICAL]" if u.get("critical") else "  [info]   "
+                print(f"{mark} {u['package']}")
 
-            if args.auto_update:
-                if has_critical:
-                    print("[🔄] Application des mises à jour critiques système...")
-                    res = updater.apply_os_updates(args.os, critical_only=True)
-                    if res["success"]:
-                        print(f"[✅] {res['message']}")
-                    else:
-                        print(f"[❌] {res['message']}")
-                        if res.get("command_output"):
-                            print(f"     Détail : {res['command_output'][:300]}")
-                        exit_code = 2
+            if args.auto_update and has_critical:
+                print("[*] Applying critical OS updates...")
+                res = updater.apply_os_updates(args.os, critical_only=True)
+                if res["success"]:
+                    print(f"[OK] {res['message']}")
                 else:
-                    print("[✓] Aucune mise à jour critique — rien à appliquer automatiquement.")
-                    print("[ℹ️] Installez les mises à jour non critiques via Windows Update / apt.")
+                    print(f"[FAIL] {res['message']}")
+                    exit_code = max(exit_code, 2)
+            elif not has_critical:
+                print("[OK] No critical updates -- nothing to apply automatically.")
         else:
-            if os_updates.get("command_output"):
-                print(f"[ℹ️] {os_updates['command_output']}")
-            else:
-                print("[✓] Votre système est à jour.")
+            msg = os_updates.get("command_output", "").strip()
+            print(f"[OK] {msg}" if msg else "[OK] System is up to date.")
 
-    # ── Inventaire des packages ───────────────────────────────────────────────
-    print("[🔍] Analyse des packages installés...")
+    # -- Package inventory ----------------------------------------------------
+    print("[*] Scanning installed packages...")
     packages = inventory.get_packages(args.os)
 
     if not packages:
-        print("[⚠️] Aucun package trouvé. Vérifiez les permissions et les outils disponibles.")
+        print("[FAIL] No packages found. Check permissions.")
         sys.exit(2)
 
-    print(f"[✓] {len(packages)} packages collectés.")
+    pip_count = sum(1 for p in packages if p.get("type") == "pip")
+    sys_count = len(packages) - pip_count
+    print(f"[OK] {len(packages)} packages collected ({pip_count} pip, {sys_count} system).")
 
-    # ── Scan CVE ──────────────────────────────────────────────────────────────
+    # -- CVE scan -------------------------------------------------------------
     vulnerable = scanner.check_vulners(packages)
 
     if not vulnerable:
-        print("[✅] Aucune vulnérabilité détectée dans vos packages pip.")
+        print("[OK] No vulnerabilities detected.")
     else:
         exit_code = max(exit_code, 1)
-        print(f"[!] {len(vulnerable)} vulnérabilité(s) détectée(s) :")
-        for item in vulnerable:
-            cvss_str = f" CVSS {item['cvss']:.1f}" if item.get("cvss") is not None else ""
-            sev = item.get("severity", "INCONNUE")
-            print(f"  ⚠️  {item['package']} {item['version']} → {item['cve']}{cvss_str} [{sev}]")
+        pip_vulns = [v for v in vulnerable if v.get("type") == "pip"
+                     or next((p for p in packages
+                               if p["package"] == v["package"]), {}).get("type") == "pip"]
+        sys_vulns = [v for v in vulnerable if v not in pip_vulns]
 
-        # Notification externe (Slack / GitHub)
+        print(f"\n[!!] {len(vulnerable)} vulnerability(ies) detected:\n")
+
+        if pip_vulns:
+            print("  -- pip packages --")
+            for v in pip_vulns:
+                cvss_str = f" | CVSS {v['cvss']:.1f}" if v.get("cvss") is not None else ""
+                print(f"  [!] {v['package']} {v['version']} -> {v['cve']}{cvss_str} [{v.get('severity','?')}]")
+
+        if sys_vulns:
+            print("  -- system packages --")
+            for v in sys_vulns:
+                cvss_str = f" | CVSS {v['cvss']:.1f}" if v.get("cvss") is not None else ""
+                print(f"  [!] {v['package']} {v['version']} -> {v['cve']}{cvss_str} [{v.get('severity','?')}]")
+
+        print()
+
+        # External notification
         if args.notify:
             notifier.send_alert(vulnerable, method=args.notify)
 
-        # Auto-mise à jour des packages pip vulnérables
+        # -- Auto-install fixes -----------------------------------------------
         if args.auto_update:
-            pip_vuln_names = list({
-                v["package"] for v in vulnerable if v.get("package")
+            # 1. pip packages
+            pip_names = list({
+                v["package"] for v in vulnerable
+                if next((p for p in packages
+                         if p["package"] == v["package"]), {}).get("type") == "pip"
             })
-            print(f"[🔄] Mise à jour automatique des packages pip vulnérables : {', '.join(pip_vuln_names)}")
-            pip_result = updater.upgrade_pip_packages(pip_vuln_names)
-            if pip_result["upgraded"]:
-                print(f"[✅] Mis à jour : {', '.join(pip_result['upgraded'])}")
-            if pip_result["failed"]:
-                for f in pip_result["failed"]:
-                    print(f"[❌] Échec pour {f['package']} : {f['error']}")
-                exit_code = max(exit_code, 2)
+            if pip_names:
+                print(f"[*] Upgrading vulnerable pip packages: {', '.join(pip_names)}")
+                pip_res = updater.upgrade_pip_packages(pip_names)
+                if pip_res["upgraded"]:
+                    print(f"[OK] pip upgraded: {', '.join(pip_res['upgraded'])}")
+                if pip_res["failed"]:
+                    for f in pip_res["failed"]:
+                        print(f"[FAIL] pip {f['package']}: {f['error']}")
+                    exit_code = max(exit_code, 2)
 
-    # ── Rapport HTML ──────────────────────────────────────────────────────────
+            # 2. System packages
+            sys_names = list({
+                v["package"] for v in vulnerable
+                if next((p for p in packages
+                         if p["package"] == v["package"]), {}).get("type") != "pip"
+            })
+            if sys_names:
+                print(f"[*] Upgrading vulnerable system packages: {', '.join(sys_names)}")
+                sys_res = updater.upgrade_system_packages(sys_names, args.os)
+                if sys_res["upgraded"]:
+                    print(f"[OK] System packages upgraded: {', '.join(sys_res['upgraded'])}")
+                if sys_res.get("manual_steps"):
+                    print("[i] Packages requiring manual update:")
+                    for step in sys_res["manual_steps"]:
+                        print(f"  > {step['command']}")
+
+    # -- HTML report ----------------------------------------------------------
     report_path = reporter.generate_html_report(packages, vulnerable, args.os)
-    print(f"[📊] Rapport HTML : {os.path.abspath(report_path)}")
+    print(f"[*] HTML report: {os.path.abspath(report_path)}")
 
     sys.exit(exit_code)
 
