@@ -1,201 +1,274 @@
-![image](patchwatchdog.png)
+﻿<p align="center">
+  <img src="patchwatchdog.png" alt="PatchWatchdog" width="180"/>
+</p>
 
-
-# 🛡 PatchWatchdog
+<h1 align="center">PatchWatchdog</h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.8+-blue.svg?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.8+"/>
-  <img src="https://img.shields.io/badge/OS-Linux%20%7C%20Windows-green.svg?style=for-the-badge&logo=linux&logoColor=white" alt="OS: Linux & Windows"/>
-  <img src="https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge" alt="License: MIT"/>
+  <img src="https://img.shields.io/badge/Python-3.8+-blue.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.8+"/>
+  <img src="https://img.shields.io/badge/OS-Linux%20%7C%20Windows-informational.svg?style=flat-square" alt="Linux & Windows"/>
+  <img src="https://img.shields.io/badge/CVE%20Engine-OSV.dev%20%7C%20Vulners-critical.svg?style=flat-square" alt="CVE Engine"/>
+  <img src="https://img.shields.io/badge/License-MIT-green.svg?style=flat-square" alt="MIT License"/>
 </p>
 
 <p align="center">
-  <b>Surveillance d'état de patch et détection de CVEs</b><br>
-  <sub>🔍 Scan des packages | 🔔 Détection de vulnérabilités | ⚡ Alertes en temps réel</sub>
+  <strong>Patch state monitoring and CVE detection for Linux and Windows systems.</strong>
 </p>
 
 ---
 
-## 📋 Description
+## Table of Contents
 
-**PatchWatchdog** est un outil de ligne de commande conçu pour surveiller l'état des packages installés sur votre système et détecter les vulnérabilités CVE connues. Il s'intègre avec l'API Vulners pour vérifier si vos versions de packages sont exposées à des failles, et peut vous alerter via Slack ou GitHub Issues.
+- [Description](#description)
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [HTML Reports](#html-reports)
+- [Project Structure](#project-structure)
+- [Integrations](#integrations)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [License](#license)
 
-> ⚠️ **Note importante** : Cet outil ne remplace pas une stratégie complète de gestion des correctifs, mais vous aide à garder un œil sur les paquets potentiellement vulnérables.
+---
 
-### 🔍 Fonctionnalités principales
+## Description
 
-- 📊 **Inventaire des packages** installés (apt, pip sur Linux, Windows Installer)
-- 🔬 **Détection automatique** des vulnérabilités via l'API Vulners
-- 🔔 **Alertes configurables** : Slack, GitHub Issues
-- 🖥️ **Multi-plateforme** : Support Linux et Windows
-- 🧰 **Léger et rapide** : Installation et exécution simples
+**PatchWatchdog** is a command-line tool that inventories installed packages, checks them against public CVE databases, and alerts you when vulnerable versions are found. It produces a timestamped HTML security report on every run and can automatically apply critical updates.
 
-## ⚙️ Installation
+**CVE scanning engines:**
 
-### 🐧 Linux
+| Scope | Engine | Authentication |
+|---|---|---|
+| Python (pip) packages | [OSV.dev](https://osv.dev/) API | None â€” free |
+| System packages | [Vulners](https://vulners.com/) API | `VULNERS_API_KEY` required (paid plan) |
+
+> **Note:** This tool complements a patch management strategy; it does not replace it.
+
+---
+
+## Features
+
+- Inventory of installed packages (apt + pip on Linux; Windows registry + pip on Windows)
+- Automatic CVE detection via OSV.dev (pip, free) and Vulners (system packages, optional)
+- Real CVSS scores and severity levels (Critical / High / Medium / Low) in every report
+- Configurable alerts: Slack Incoming Webhook, GitHub Issues
+- Automatic update of vulnerable pip packages with `--auto-update`
+- Windows Update check and critical patch application
+- HTML reports with XSS protection (all output HTML-escaped)
+- `.env` file support via `python-dotenv`
+- Exit codes suitable for CI/CD pipelines (`0` = clean, `1` = vulnerabilities, `2` = error)
+
+---
+
+## Requirements
+
+- Python 3.8 or later
+- pip
+
+All Python dependencies are listed in `requirements.txt`:
+
+```
+requests>=2.31.0
+python-dotenv>=1.0.0
+```
+
+---
+
+## Installation
+
+### Linux
 
 ```bash
-# Cloner le dépôt
 git clone https://github.com/servais1983/PatchWatchdog.git
 cd PatchWatchdog
-
-# Configurer les variables d'environnement
-cp .env.example .env
-# Éditez .env avec vos webhooks et tokens
-
-# Exécuter le script d'installation
+cp .env.example .env          # then edit .env with your credentials
 chmod +x install.sh
 ./install.sh
 ```
 
-### 🪟 Windows
+### Windows
 
 ```powershell
-# Cloner le dépôt
 git clone https://github.com/servais1983/PatchWatchdog.git
 cd PatchWatchdog
-
-# Configurer les variables d'environnement
-copy .env.example .env
-# Éditez .env avec vos webhooks et tokens en utilisant Notepad ou un autre éditeur
-# notepad .env
-
-# Exécuter le script d'installation
+copy .env.example .env        # then edit .env with your credentials
 .\install.bat
 ```
 
-> 💡 **Note pour Windows** : Assurez-vous que Python est installé et ajouté au PATH. Vous pouvez télécharger Python depuis [python.org](https://www.python.org/downloads/) en cochant l'option "Add Python to PATH" lors de l'installation.
+> **Windows requirement:** Python must be installed and added to the system PATH.  
+> Download from [python.org](https://www.python.org/downloads/) and check **"Add Python to PATH"** during setup.
 
-## 🛠️ Utilisation
+---
 
-### Vérification basique
+## Configuration
 
-#### 🐧 Linux
+Copy `.env.example` to `.env` and fill in your values:
 
-```bash
-# Vérification sur Linux sans notification
-python3 patchwatchdog.py --os linux
+```ini
+# Slack notification (Incoming Webhook URL)
+SLACK_WEBHOOK=https://hooks.slack.com/services/XXXXX/XXXXX/XXXXX
 
-# Vérification sur Linux avec notification Slack
-python3 patchwatchdog.py --os linux --notify slack
+# GitHub Issues notification
+GITHUB_TOKEN=ghp_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+GITHUB_REPO=your_user/your_repository
 
-# Vérification avec création d'issue GitHub
-python3 patchwatchdog.py --os linux --notify github
+# System package scanning via Vulners (optional â€” paid plan required)
+# Without this key, only pip packages are scanned via OSV.dev (free)
+VULNERS_API_KEY=
 ```
 
-#### 🪟 Windows
+All variables are optional. Features that depend on missing variables are gracefully disabled with an informational message.
 
-```powershell
-# Vérification sur Windows sans notification
+---
+
+## Usage
+
+### Basic scan
+
+```bash
+# Linux
+python3 patchwatchdog.py --os linux
+
+# Windows
 python patchwatchdog.py --os windows
+```
 
-# Vérification sur Windows avec notification Slack
-python patchwatchdog.py --os windows --notify slack
+### Scan with notification
 
-# Vérification avec création d'issue GitHub
+```bash
+# Send alert to Slack
+python3 patchwatchdog.py --os linux --notify slack
+
+# Open a GitHub Issue
 python patchwatchdog.py --os windows --notify github
 ```
 
-### 📊 Rapports HTML
-
-Un rapport HTML détaillé est automatiquement généré à chaque exécution de PatchWatchdog. Ce rapport inclut :
-
-- Résumé de l'analyse avec statistiques
-- Liste des vulnérabilités détectées
-- Inventaire complet des packages analysés
-- Recommandations de sécurité
-
-Les rapports sont sauvegardés dans le dossier `reports/` avec un horodatage unique.
-
-### 🔄 Vérification et application des mises à jour
-
-PatchWatchdog peut également vérifier et appliquer automatiquement les mises à jour critiques du système :
-
-#### 🐧 Linux
+### Check and apply system updates
 
 ```bash
-# Vérifier les mises à jour disponibles
+# Check available system updates (no installation)
 python3 patchwatchdog.py --os linux --check-updates
+python  patchwatchdog.py --os windows --check-updates
 
-# Vérifier et appliquer automatiquement les mises à jour critiques
-python3 patchwatchdog.py --os linux --auto-update
+# Check CVEs and apply critical updates automatically
+python3 patchwatchdog.py --os linux  --auto-update
+python  patchwatchdog.py --os windows --auto-update
 ```
 
-#### 🪟 Windows
+`--auto-update` does two things:
+1. Applies **critical system patches** (Windows Update / apt security).
+2. Upgrades **vulnerable pip packages** to their latest version.
 
-```powershell
-# Vérifier les mises à jour disponibles
-python patchwatchdog.py --os windows --check-updates
+> **Privilege note:** Applying system updates requires administrator rights.  
+> On Linux, prefix the command with `sudo`. On Windows, run the terminal as Administrator.
 
-# Vérifier et appliquer automatiquement les mises à jour critiques
-python patchwatchdog.py --os windows --auto-update
+### All options
+
+| Flag | Description |
+|---|---|
+| `--os {linux,windows}` | Target operating system (required) |
+| `--notify {slack,github}` | Send an alert when vulnerabilities are found |
+| `--check-updates` | Query the OS for available system updates |
+| `--auto-update` | Apply critical system updates and upgrade vulnerable pip packages |
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | No vulnerabilities found |
+| `1` | One or more vulnerabilities detected |
+| `2` | Runtime error (missing packages, permission denied, etc.) |
+
+---
+
+## HTML Reports
+
+A detailed HTML report is generated automatically on every run and saved to the `reports/` directory with a unique timestamp:
+
+```
+reports/patchwatchdog_report_20260227_203629.html
 ```
 
-> ⚠️ **Note importante** : L'application automatique des mises à jour nécessite des privilèges administratifs. Sur Linux, utilisez `sudo` si nécessaire. Sur Windows, exécutez PowerShell en tant qu'administrateur.
+Each report includes:
 
-### Variables d'environnement
+- Summary statistics (packages scanned, vulnerabilities found, vulnerability rate)
+- Vulnerability table with CVE identifier, CVSS score, severity badge, and NVD link
+- Full package inventory with status (Secure / Vulnerable) and package type (pip / system)
+- Security recommendations
 
-Pour activer les notifications, configurez les variables d'environnement suivantes dans le fichier `.env` :
+---
 
-```ini
-# Pour les notifications Slack
-SLACK_WEBHOOK=https://hooks.slack.com/services/XXXXX/XXXXX/XXXXX
-
-# Pour les issues GitHub
-GITHUB_TOKEN=ghp_xxx
-GITHUB_REPO=tonuser/tonrepo
-```
-
-## 🗂️ Structure du projet
+## Project Structure
 
 ```
-patchwatchdog/
-├── core/                # Modules principaux
-│   ├── inventory.py     # Collecte des packages installés
-│   ├── scanner.py       # Vérification des versions vulnérables
-│   ├── notifier.py      # Envoi des alertes
-│   └── utils.py         # Fonctions utilitaires
-├── patchwatchdog.py     # Script principal CLI
-├── requirements.txt     # Dépendances Python
-├── install.sh           # Script d'installation
-├── .env.example         # Exemple de configuration
-└── README.md            # Documentation
+PatchWatchdog/
+â”œâ”€â”€ core/
+â”‚   â”œâ”€â”€ __init__.py        # Package marker
+â”‚   â”œâ”€â”€ inventory.py       # Package collection (apt, pip, Windows registry)
+â”‚   â”œâ”€â”€ scanner.py         # CVE lookup via OSV.dev and Vulners
+â”‚   â”œâ”€â”€ notifier.py        # Slack and GitHub Issues alerts
+â”‚   â”œâ”€â”€ reporter.py        # HTML report generation (XSS-safe)
+â”‚   â”œâ”€â”€ updater.py         # OS update check/apply, pip upgrade
+â”‚   â””â”€â”€ utils.py           # Shared utilities (CVSS scoring, NVD links)
+â”œâ”€â”€ patchwatchdog.py       # CLI entry point
+â”œâ”€â”€ requirements.txt       # Python dependencies
+â”œâ”€â”€ install.sh             # Linux installer
+â”œâ”€â”€ install.bat            # Windows installer
+â”œâ”€â”€ .env.example           # Environment variable template
+â””â”€â”€ README.md              # This file
 ```
 
-## 🔐 Intégrations
+---
+
+## Integrations
 
 ### Slack
 
-L'intégration Slack nécessite de créer un webhook entrant dans votre espace de travail :
-1. Créez une App dans l'interface Slack Admin
-2. Activez les Webhooks entrants
-3. Copiez l'URL du webhook dans votre `.env`
+1. Create a Slack App at [api.slack.com](https://api.slack.com/apps).
+2. Enable **Incoming Webhooks** and add a webhook to a channel.
+3. Copy the webhook URL into `SLACK_WEBHOOK` in your `.env`.
 
 ### GitHub Issues
 
-L'intégration GitHub Issues nécessite :
-1. Un token personnel avec permissions `repo`
-2. Le nom du dépôt au format `utilisateur/nom-repo`
+1. Generate a personal access token with the `repo` scope at  
+   **Settings > Developer settings > Personal access tokens**.
+2. Set `GITHUB_TOKEN` and `GITHUB_REPO` (format: `owner/repository`) in your `.env`.
 
-## 📈 Améliorations futures
+### Vulners (system packages)
 
-- [ ] **Intégration OSQuery** pour une collecte plus précise des paquets
-- [ ] **Support Wazuh** pour la gestion centralisée
-- [ ] **Tableau de bord web** avec FastAPI
-- [ ] **Base de données Redis** pour l'analyse historique
-- [ ] **Alertes différentielles** (uniquement les nouvelles vulnérabilités)
-- [ ] **Rapports détaillés** avec scores CVSS et correctifs recommandés
+1. Create an account at [vulners.com](https://vulners.com/).
+2. Subscribe to an API plan and copy your key into `VULNERS_API_KEY` in your `.env`.
+3. Without this key, only pip packages are analysed (via the free OSV.dev API).
 
-## 🤝 Contribuer
+---
 
-Les contributions sont les bienvenues !! N'hésitez pas à ouvrir une issue ou à soumettre une pull request.
+## Roadmap
 
-## 📄 Licence
+- [ ] OSQuery integration for more accurate system package discovery
+- [ ] Wazuh integration for centralised security management
+- [ ] Web dashboard with FastAPI
+- [ ] Redis-backed historical vulnerability tracking
+- [ ] Differential alerts (report only new vulnerabilities since last run)
+- [ ] NVD API v2 integration for richer CVE metadata
 
-Ce projet est sous licence MIT - voir le fichier LICENSE pour plus de détails.
+---
+
+## Contributing
+
+Contributions are welcome. Please open an issue to discuss your proposal before submitting a pull request. Follow PEP 8 for Python code style.
+
+---
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
 ---
 
 <p align="center">
-  <sub>🔐 Développé pour des environnements sécurisés et à jour</sub>
+  Developed for secure and up-to-date environments.
 </p>
+

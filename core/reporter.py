@@ -1,8 +1,209 @@
 import os
+import html
 import datetime
-from core.utils import format_cve_details, format_severity
+from core.utils import format_cve_details, cvss_to_severity
+
+
+def _esc(value):
+    """Échappe les caractères HTML pour prévenir toute injection (XSS)."""
+    return html.escape(str(value), quote=True)
+
+
+def _severity_badge_class(severity):
+    """Retourne la classe CSS correspondant à la sévérité."""
+    mapping = {
+        "CRITIQUE": "badge-critical",
+        "ÉLEVÉE": "badge-high",
+        "MOYENNE": "badge-medium",
+        "FAIBLE": "badge-low",
+    }
+    return mapping.get(severity, "badge-low")
+
+
+CSS = """
+        body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;line-height:1.6;color:#333;max-width:1200px;margin:0 auto;padding:20px;background:#f8f9fa}
+        header{background:#2c3e50;color:#fff;padding:20px;border-radius:5px;margin-bottom:20px;box-shadow:0 2px 5px rgba(0,0,0,.1)}
+        h1,h2,h3{color:#2c3e50;margin-top:30px}
+        header h1{color:#fff;margin-top:0}
+        .summary-box{background:#fff;border-radius:5px;padding:20px;margin-bottom:20px;box-shadow:0 2px 5px rgba(0,0,0,.1);display:flex;justify-content:space-between;flex-wrap:wrap}
+        .summary-item{text-align:center;padding:15px;flex:1;min-width:200px}
+        .summary-number{font-size:2.5em;font-weight:700;margin-bottom:10px}
+        .summary-label{font-size:1.1em;color:#555}
+        .critical{color:#e74c3c}.safe{color:#27ae60}.warning{color:#f39c12}
+        table{width:100%;border-collapse:collapse;margin:20px 0;background:#fff;box-shadow:0 2px 5px rgba(0,0,0,.1);border-radius:5px;overflow:hidden}
+        th,td{padding:12px 15px;text-align:left;border-bottom:1px solid #ddd}
+        th{background:#34495e;color:#fff;font-weight:600}
+        tr:hover{background:#f5f5f5}
+        .container{background:#fff;border-radius:5px;padding:20px;margin-bottom:20px;box-shadow:0 2px 5px rgba(0,0,0,.1)}
+        .footer{text-align:center;margin-top:30px;padding:20px;color:#7f8c8d;font-size:.9em}
+        a{color:#3498db;text-decoration:none}a:hover{text-decoration:underline}
+        .badge{display:inline-block;padding:5px 10px;border-radius:3px;font-size:.8em;font-weight:700;text-transform:uppercase}
+        .badge-critical{background:#e74c3c;color:#fff}
+        .badge-high{background:#e67e22;color:#fff}
+        .badge-medium{background:#f39c12;color:#fff}
+        .badge-low{background:#3498db;color:#fff}
+        .no-vulnerabilities{background:#27ae60;color:#fff;padding:15px;border-radius:5px;text-align:center;font-weight:700;font-size:1.2em;margin:20px 0}
+"""
+
 
 def generate_html_report(packages, vulnerable, os_type):
+    """
+    Génère un rapport HTML sécurisé (protection XSS, sévérité réelle).
+
+    Args:
+        packages (list): Liste des packages scannés.
+        vulnerable (list): Liste des vulnérabilités (dict avec clés package, version, cve, cvss, severity).
+        os_type (str): 'linux' ou 'windows'.
+
+    Returns:
+        str: Chemin absolu du rapport HTML généré.
+    """
+    # Enrichir les vulnérabilités avec les liens NVD et la sévérité réelle
+    for vuln in vulnerable:
+        vuln.setdefault("cve_link", format_cve_details(vuln["cve"]))
+        # Ne pas écraser la sévérité fournie par le scanner
+        if "severity" not in vuln or vuln["severity"] == "INCONNUE":
+            cvss = vuln.get("cvss")
+            vuln["severity"] = cvss_to_severity(cvss) if cvss is not None else "INCONNUE"
+
+    os.makedirs("reports", exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_filename = f"reports/patchwatchdog_report_{timestamp}.html"
+
+    total_packages = len(packages)
+    total_vulnerable = len(vulnerable)
+    vuln_rate = (total_vulnerable / total_packages * 100) if total_packages > 0 else 0
+    now_str = datetime.datetime.now().strftime("%d/%m/%Y à %H:%M:%S")
+
+    vuln_class = "critical" if total_vulnerable > 0 else "safe"
+    rate_class = "critical" if vuln_rate > 5 else ("warning" if vuln_rate > 0 else "safe")
+
+    # ── En-tête + résumé ─────────────────────────────────────────────────────
+    html_out = f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rapport PatchWatchdog &mdash; {_esc(timestamp)}</title>
+    <style>{CSS}</style>
+</head>
+<body>
+<header>
+    <h1>&#x1F6E1;&#xFE0F; Rapport PatchWatchdog</h1>
+    <p>Analyse de s&#233;curit&#233; des packages install&#233;s &mdash; {_esc(now_str)}</p>
+</header>
+
+<div class="summary-box">
+    <div class="summary-item">
+        <div class="summary-number">{total_packages}</div>
+        <div class="summary-label">Packages analys&#233;s</div>
+    </div>
+    <div class="summary-item">
+        <div class="summary-number {vuln_class}">{total_vulnerable}</div>
+        <div class="summary-label">Vuln&#233;rabilit&#233;s d&#233;tect&#233;es</div>
+    </div>
+    <div class="summary-item">
+        <div class="summary-number {rate_class}">{vuln_rate:.1f}%</div>
+        <div class="summary-label">Taux de vuln&#233;rabilit&#233;</div>
+    </div>
+    <div class="summary-item">
+        <div class="summary-number">{_esc(os_type.capitalize())}</div>
+        <div class="summary-label">Syst&#232;me d&apos;exploitation</div>
+    </div>
+</div>
+
+<div class="container">
+    <h2>R&#233;sum&#233; de l&apos;analyse</h2>
+    <p>PatchWatchdog a analys&#233; <strong>{total_packages} packages</strong>
+    install&#233;s sur votre syst&#232;me <strong>{_esc(os_type.capitalize())}</strong>.
+    Analyse effectu&#233;e le {_esc(now_str)}.</p>
+    {"<div class=\"no-vulnerabilities\">&#x2705; Aucune vuln&#233;rabilit&#233; d&#233;tect&#233;e dans vos packages.</div>" if not vulnerable else ""}
+</div>
+"""
+
+    # ── Section vulnérabilités ────────────────────────────────────────────────
+    if vulnerable:
+        html_out += """
+<div class="container">
+    <h2>Vuln&#233;rabilit&#233;s d&#233;tect&#233;es</h2>
+    <p>Ces packages pr&#233;sentent des vuln&#233;rabilit&#233;s connues et doivent &#234;tre mis &#224; jour.</p>
+    <table>
+        <thead>
+            <tr>
+                <th>Package</th><th>Version</th><th>CVE</th>
+                <th>CVSS</th><th>S&#233;v&#233;rit&#233;</th>
+            </tr>
+        </thead>
+        <tbody>
+"""
+        for v in vulnerable:
+            badge_class = _severity_badge_class(v["severity"])
+            cvss_display = f"{v['cvss']:.1f}" if v.get("cvss") is not None else "N/A"
+            html_out += (
+                f"            <tr>"
+                f"<td><strong>{_esc(v['package'])}</strong></td>"
+                f"<td>{_esc(v['version'])}</td>"
+                f"<td><a href=\"{_esc(v['cve_link'])}\" target=\"_blank\" rel=\"noopener noreferrer\">"
+                f"{_esc(v['cve'])}</a></td>"
+                f"<td>{_esc(cvss_display)}</td>"
+                f"<td><span class=\"badge {badge_class}\">{_esc(v['severity'])}</span></td>"
+                f"</tr>\n"
+            )
+        html_out += "        </tbody>\n    </table>\n</div>\n"
+
+    # ── Tous les packages ─────────────────────────────────────────────────────
+    vuln_keys = {(v["package"], v["version"]) for v in vulnerable}
+    html_out += f"""
+<div class="container">
+    <h2>Tous les packages analys&#233;s ({total_packages})</h2>
+    <table>
+        <thead>
+            <tr><th>Package</th><th>Version</th><th>Type</th><th>Statut</th></tr>
+        </thead>
+        <tbody>
+"""
+    for pkg in packages:
+        is_vuln = (pkg["package"], pkg["version"]) in vuln_keys
+        badge = ('<span class="badge badge-critical">Vuln&#233;rable</span>'
+                 if is_vuln else
+                 '<span class="badge badge-low">S&#233;curis&#233;</span>')
+        pkg_type = _esc(pkg.get("type", "system"))
+        html_out += (
+            f"            <tr>"
+            f"<td><strong>{_esc(pkg['package'])}</strong></td>"
+            f"<td>{_esc(pkg['version'])}</td>"
+            f"<td>{pkg_type}</td>"
+            f"<td>{badge}</td>"
+            f"</tr>\n"
+        )
+    html_out += "        </tbody>\n    </table>\n</div>\n"
+
+    # ── Recommandations + pied de page ────────────────────────────────────────
+    html_out += """
+<div class="container">
+    <h2>Recommandations</h2>
+    <ul>
+        <li>Mettre &#224; jour r&#233;guli&#232;rement tous vos packages.</li>
+        <li>Porter une attention particuli&#232;re aux packages vuln&#233;rables.</li>
+        <li>Configurer des mises &#224; jour automatiques lorsque c&apos;est possible.</li>
+        <li>Ex&#233;cuter PatchWatchdog r&#233;guli&#232;rement pour surveiller l&apos;&#233;tat de vos packages.</li>
+        <li>D&#233;finir <code>VULNERS_API_KEY</code> pour analyser aussi les packages syst&#232;me.</li>
+    </ul>
+</div>
+
+<div class="footer">
+    <p>Rapport g&#233;n&#233;r&#233; par <strong>PatchWatchdog</strong> &mdash;
+    <a href="https://github.com/servais1983/PatchWatchdog" target="_blank" rel="noopener noreferrer">GitHub</a></p>
+</div>
+</body>
+</html>
+"""
+
+    with open(report_filename, "w", encoding="utf-8") as f:
+        f.write(html_out)
+
+    return report_filename
+
     """
     Génère un rapport HTML complet avec les résultats du scan.
     
